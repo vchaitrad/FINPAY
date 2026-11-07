@@ -394,9 +394,4 @@ Business errors are raised in the service layer as `AppError` and returned as JS
 - **SQLite** is used for simplicity. For production, switch to PostgreSQL (change `FINPAY_DB`).
 - Possible additions: refunds, transaction PDF statements, pagination, rate limiting, password reset.
 
----
 
-## Author
-
-**vchaitrad** – B.E. CSE (AI), KLE Technological University, Hubballi
-Repository: https://github.com/vchaitrad/FINPAY
