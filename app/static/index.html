@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FinPay</title>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--ink:#1f2937;--mut:#6b7280;--pri:#4f46e5;--ok:#16a34a;--bad:#dc2626;--line:#e5e7eb}
+@media(prefers-color-scheme:dark){:root{--bg:#0f172a;--card:#1e293b;--ink:#e5e7eb;--mut:#94a3b8;--pri:#818cf8;--line:#334155}}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--pri);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center}
+header b{font-size:20px}header span{margin-right:12px;font-size:14px}
+main{max-width:980px;margin:20px auto;padding:0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+h2{margin:0 0 12px;font-size:17px}h3{margin:0 0 8px}
+input,select,button{font:inherit;padding:9px 11px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);width:100%;margin-bottom:10px}
+button{background:var(--pri);color:#fff;border:0;cursor:pointer;font-weight:600}button.sec{background:transparent;color:#fff;border:1px solid #fff;width:auto;margin:0;padding:6px 12px}
+.tabs{display:flex;gap:8px}.tabs button{background:var(--line);color:var(--ink)}.tabs button.on{background:var(--pri);color:#fff}
+.big{font-size:34px;font-weight:700}.mut{color:var(--mut);font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+.pos{color:var(--ok);font-weight:600}.neg{color:var(--bad);font-weight:600}
+.badge{padding:3px 10px;border-radius:99px;color:#fff;font-size:13px}.ok{background:var(--ok)}.bad{background:var(--bad)}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:8px;color:#fff;display:none;z-index:9}
+.hide{display:none}.auth{max-width:380px;margin:50px auto}
+</style></head><body>
+<header><b>💳 FinPay</b><div><span id="who"></span><button class="sec hide" id="out" onclick="logout()">Logout</button></div></header>
+<main id="main"></main><div id="toast"></div>
+<script>
+let token=null,user=null;
+try{token=sessionStorage.getItem("t")}catch(e){}
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const inr=n=>"₹"+Number(n).toFixed(2);
+const dt=s=>new Date(s+"Z").toLocaleString();
+function toast(msg,ok=true){const t=$("toast");t.textContent=msg;t.style.background=ok?"#16a34a":"#dc2626";t.style.display="block";setTimeout(()=>t.style.display="none",3000)}
+async function api(path,method="GET",body){
+  const r=await fetch(path,{method,headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})},body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){let m=d.detail;if(Array.isArray(m))m=m.map(x=>x.msg).join(", ");throw new Error(m||"Something went wrong")}
+  return d}
+const run=async f=>{try{await f()}catch(e){toast(e.message,false)}};
+
+function authView(mode="login"){
+  $("who").textContent="";$("out").classList.add("hide");
+  $("main").innerHTML=`<div class="card auth"><div class="tabs" style="margin-bottom:14px">
+    <button class="${mode=="login"?"on":""}" onclick="authView('login')">Login</button>
+    <button class="${mode=="register"?"on":""}" onclick="authView('register')">Register</button></div>
+    <form onsubmit="return submitAuth(event,'${mode}')">
+    ${mode=="register"?`<input id="a_name" placeholder="Full name" required>`:""}
+    <input id="a_email" placeholder="Email" required>
+    <input id="a_pass" type="password" placeholder="Password (min 6)" required>
+    ${mode=="register"?`<select id="a_role"><option value="student">Student</option><option value="merchant">Merchant</option><option value="admin">Admin</option></select>`:""}
+    <button>${mode=="login"?"Login":"Create account"}</button></form></div>`}
+function submitAuth(e,mode){e.preventDefault();run(async()=>{
+  const email=$("a_email").value.trim(),password=$("a_pass").value;
+  if(mode=="register")await api("/auth/register","POST",{name:$("a_name").value,email,password,role:$("a_role").value});
+  const d=await api("/auth/login","POST",{email,password});
+  token=d.access_token;try{sessionStorage.setItem("t",token)}catch(e){}
+  await enter()});return false}
+function logout(){token=null;user=null;try{sessionStorage.removeItem("t")}catch(e){}authView()}
+async function enter(){
+  try{user=await api("/auth/me")}catch(e){return logout()}
+  $("who").textContent=`${user.name} (${user.role})`;$("out").classList.remove("hide");
+  ({student:student,merchant:merchant,admin:admin})[user.role]()}
+
+async function student(){await run(async()=>{
+  const [bal,ms,led,pays,rules]=await Promise.all([api("/wallet/balance"),api("/merchants"),api("/wallet/history"),api("/payments/history"),api("/cashback/rules")]);
+  const mn=Object.fromEntries(ms.map(m=>[m.id,m.business_name]));
+  $("main").innerHTML=`<div class="grid">
+   <div class="card"><h2>Wallet balance</h2><div class="big">${inr(bal.balance)}</div>
+     <p class="mut">Cashback: ${rules.rate_percent}% on payments ≥ ${inr(rules.min_payment)} (max ${inr(rules.max_cashback_per_payment)})</p></div>
+   <div class="card"><h2>Add money</h2><form onsubmit="return topup(event)">
+     <input id="t_amt" type="number" min="1" step="0.01" placeholder="Amount" required><button>Top up</button></form></div>
+   <div class="card"><h2>Pay a merchant</h2>${ms.length?`<form onsubmit="return pay(event)">
+     <select id="p_m">${ms.map(m=>`<option value="${m.id}">${esc(m.business_name)} (${esc(m.category)})</option>`).join("")}</select>
+     <input id="p_amt" type="number" min="1" step="0.01" placeholder="Amount" required><button>Pay now</button></form>`:`<p class="mut">No merchants yet. Register a merchant account first.</p>`}</div></div>
+   <div class="card"><h2>My payments</h2>${pays.length?`<table><tr><th>#</th><th>Merchant</th><th>Amount</th><th>Cashback</th><th>When</th></tr>
+     ${pays.map(p=>`<tr><td>${p.id}</td><td>${esc(mn[p.merchant_id]||p.merchant_id)}</td><td>${inr(p.amount)}</td><td class="pos">${inr(p.cashback)}</td><td>${dt(p.created_at)}</td></tr>`).join("")}</table>`:`<p class="mut">No payments yet.</p>`}</div>
+   <div class="card"><h2>Wallet history</h2>${led.length?`<table><tr><th>Type</th><th>Amount</th><th>Details</th><th>When</th></tr>
+     ${led.map(l=>`<tr><td>${esc(l.entry_type)}</td><td class="${l.amount>=0?"pos":"neg"}">${l.amount>=0?"+":""}${inr(l.amount)}</td><td>${esc(l.reference)}</td><td>${dt(l.created_at)}</td></tr>`).join("")}</table>`:`<p class="mut">Nothing yet.</p>`}</div>`})}
+function topup(e){e.preventDefault();run(async()=>{await api("/wallet/topup","POST",{amount:+$("t_amt").value});toast("Wallet topped up");student()});return false}
+function pay(e){e.preventDefault();run(async()=>{const r=await api("/payments","POST",{merchant_id:+$("p_m").value,amount:+$("p_amt").value});
+  toast(r.cashback>0?`Paid! Cashback ${inr(r.cashback)} added`:"Payment successful");student()});return false}
+
+async function merchant(){await run(async()=>{
+  let me=null;try{me=await api("/merchants/me")}catch(e){}
+  if(!me){$("main").innerHTML=`<div class="card auth"><h2>Create your merchant profile</h2><form onsubmit="return mkMerchant(event)">
+    <input id="m_name" placeholder="Business name" required><input id="m_cat" placeholder="Category (food, books...)" value="general">
+    <button>Create profile</button></form></div>`;return}
+  const rec=await api("/payments/received"),total=rec.reduce((s,p)=>s+p.amount,0);
+  $("main").innerHTML=`<div class="grid"><div class="card"><h2>${esc(me.business_name)}</h2><p class="mut">Merchant ID: ${me.id} · ${esc(me.category)}</p></div>
+   <div class="card"><h2>Total received</h2><div class="big">${inr(total)}</div><p class="mut">${rec.length} payments</p></div></div>
+   <div class="card"><h2>Payments received</h2>${rec.length?`<table><tr><th>#</th><th>Student ID</th><th>Amount</th><th>When</th></tr>
+   ${rec.map(p=>`<tr><td>${p.id}</td><td>${p.student_id}</td><td>${inr(p.amount)}</td><td>${dt(p.created_at)}</td></tr>`).join("")}</table>`:`<p class="mut">No payments yet.</p>`}</div>`})}
+function mkMerchant(e){e.preventDefault();run(async()=>{await api("/merchants","POST",{business_name:$("m_name").value,category:$("m_cat").value});toast("Profile created");merchant()});return false}
+
+async function admin(){
+  const n=new Date();
+  $("main").innerHTML=`<div class="card"><h2>Monthly reconciliation</h2><div class="grid">
+   <input id="r_y" type="number" value="${n.getFullYear()}"><input id="r_m" type="number" min="1" max="12" value="${n.getMonth()+1}">
+   <button onclick="report()">Generate report</button></div></div><div id="rep"></div>`;report()}
+function report(){run(async()=>{
+  const r=await api(`/reconciliation/monthly?year=${$("r_y").value}&month=${$("r_m").value}`);
+  $("rep").innerHTML=`<div class="grid"><div class="card"><h3>Period</h3><div class="big">${r.period}</div></div>
+   <div class="card"><h3>Total sales</h3><div class="big">${inr(r.total_sales)}</div><p class="mut">${r.total_transactions} transactions</p></div>
+   <div class="card"><h3>Cashback given</h3><div class="big">${inr(r.total_cashback)}</div></div>
+   <div class="card"><h3>Wallet check</h3><span class="badge ${r.status=="BALANCED"?"ok":"bad"}">${r.status}</span>
+     <p class="mut">${r.wallet_mismatches.length} mismatches</p></div></div>
+   <div class="card"><h2>Merchant settlement</h2>${r.merchants.length?`<table><tr><th>Merchant</th><th>Txns</th><th>Gross sales</th><th>Cashback</th><th>Settlement due</th></tr>
+   ${r.merchants.map(m=>`<tr><td>${esc(m.business_name)}</td><td>${m.transactions}</td><td>${inr(m.gross_sales)}</td><td>${inr(m.cashback_given)}</td><td><b>${inr(m.settlement_due)}</b></td></tr>`).join("")}</table>`:`<p class="mut">No transactions this month.</p>`}</div>`})}
+
+token?enter():authView();
+</script></body></html>
